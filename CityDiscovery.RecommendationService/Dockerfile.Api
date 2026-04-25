@@ -1,0 +1,21 @@
+# CityDiscovery Recommendation Service API - Multi-stage Dockerfile
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/CityDiscovery.RecommendationService.Api.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/"]
+RUN dotnet restore "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/CityDiscovery.RecommendationService.Api.csproj"
+
+COPY . .
+
+WORKDIR "/src/CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api"
+RUN dotnet build "CityDiscovery.RecommendationService.Api.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "CityDiscovery.RecommendationService.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
+WORKDIR /app
+EXPOSE 80
+ENV ASPNETCORE_URLS=http://+:80
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "CityDiscovery.RecommendationService.Api.dll"]
