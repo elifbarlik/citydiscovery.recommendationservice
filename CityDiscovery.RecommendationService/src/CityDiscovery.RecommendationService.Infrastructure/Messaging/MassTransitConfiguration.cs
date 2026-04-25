@@ -1,7 +1,6 @@
-using CityDiscovery.RecommendationService.Application.Consumers;
-using CityDiscovery.Shared.Events.Review;
-using CityDiscovery.Shared.Events.UserInteractions;
-using CityDiscovery.Shared.Events.Venue;
+using CityDiscovery.RecommendationService.Application.Adapters.Consumers;
+using CityDiscovery.RecommendationService.Application.Adapters.ExternalEvents;
+
 using MassTransit;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,13 +9,40 @@ namespace CityDiscovery.RecommendationService.Infrastructure.Messaging;
 
 /// <summary>
 /// Configures MassTransit with RabbitMQ transport, consumers, retry policies, and dead-letter queues.
+/// 
+/// TWO SETS OF CONSUMERS:
+/// 1. "Shared" consumers — listen on CityDiscovery.Shared exchange names (future-proof)
+/// 2. "Adapter" consumers — listen on actual service exchanges via Bind() (current compatibility)
 /// </summary>
 public static class MassTransitConfiguration
 {
+    // -----------------------------------------------------------------------
+    // Exchange names used by each producer service (derived from their CLR types).
+    // These MUST match the full namespace:ClassName of the publishing service's event class.
+    // -----------------------------------------------------------------------
+    private const string VenueService_VenueCreated =
+        "CityDiscovery.VenueService.VenuesService.Shared.Common.Events.Venue:VenueCreatedEvent";
+    private const string VenueService_VenueUpdated =
+        "CityDiscovery.VenuesService.Shared.Common.Events.Venue:VenueUpdatedEvent";
+    private const string VenueService_VenueDeleted =
+        "CityDiscovery.VenueService.VenuesService.Shared.Common.Events.Venue:VenueDeletedEvent";
+    private const string SocialService_PostCreated =
+        "CityDiscovery.SocialService.SocialServiceShared.Common.Events.Social:PostCreatedEvent";
+    private const string SocialService_PostLiked =
+        "CityDiscovery.SocialService.SocialServiceShared.Common.Events.Social:PostLikedEvent";
+    private const string SocialService_PostSaved =
+        "CityDiscovery.SocialService.SocialServiceShared.Common.Events.Social:PostSavedEvent";
+    private const string ReviewService_ReviewCreated =
+        "CityDiscovery.ReviewService.ReviewService.Shared.Events.Review:ReviewCreatedEvent";
+    private const string ReviewService_VenueFavorited =
+        "CityDiscovery.ReviewService.ReviewService.Shared.Events.Venue:VenueFavoritedEvent";
+    private const string IdentityService_UserDeleted =
+        "IdentityService.Shared.MessageBus.Identity:UserDeletedEvent";
+    private const string IdentityService_UserLoggedIn =
+        "IdentityService.Shared.MessageBus.Identity:UserLoggedInEvent";
+
     /// <summary>
     /// Registers MassTransit with RabbitMQ and all event consumers.
-    /// Queue naming convention: recommendation.{event-name}
-    /// DLQ naming convention:   recommendation.{event-name}_error
     /// </summary>
     public static IServiceCollection AddMassTransitWithRabbitMq(
         this IServiceCollection services,
@@ -28,14 +54,17 @@ public static class MassTransitConfiguration
 
         services.AddMassTransit(x =>
         {
-            // --- Register consumers ---
-            x.AddConsumer<VenueCreatedConsumer>();
-            x.AddConsumer<VenueUpdatedConsumer>();
-            x.AddConsumer<PostLikedConsumer>();
-            x.AddConsumer<PostSavedConsumer>();
-            x.AddConsumer<VenueFavoritedConsumer>();
-            x.AddConsumer<ReviewSubmittedConsumer>();
-            x.AddConsumer<VenueViewedConsumer>();
+            // --- Register Adapter consumers (for current service compatibility) ---
+            x.AddConsumer<VenueCreatedAdapterConsumer>();
+            x.AddConsumer<VenueUpdatedAdapterConsumer>();
+            x.AddConsumer<VenueDeletedAdapterConsumer>();
+            x.AddConsumer<PostCreatedAdapterConsumer>();
+            x.AddConsumer<PostLikedAdapterConsumer>();
+            x.AddConsumer<ReviewCreatedAdapterConsumer>();
+            x.AddConsumer<VenueFavoritedAdapterConsumer>();
+            x.AddConsumer<UserDeletedAdapterConsumer>();
+            x.AddConsumer<UserLoggedInAdapterConsumer>();
+            x.AddConsumer<PostSavedAdapterConsumer>();
 
             x.UsingRabbitMq((ctx, cfg) =>
             {
@@ -45,48 +74,85 @@ public static class MassTransitConfiguration
                     h.Password(password);
                 });
 
-                cfg.UseRawJsonDeserializer();
+                // ===============================================================
+                // ADAPTER CONSUMERS — bind to ACTUAL service exchanges via Bind()
+                // These consume the real events published by other services NOW.
+                //
+                // Each endpoint uses ClearSerialization() + UseRawJsonSerializer()
+                // to remove the standard MassTransit deserializer, so messages
+                // with content-type application/vnd.masstransit+json (envelope)
+                // and application/json (raw) are both handled by the raw
+                // deserializer which bypasses messageType URN matching.
+                // ===============================================================
 
-                // --- VenueCreated ---
-                cfg.ReceiveEndpoint("recommendation.venue-created", e =>
+                // VenueService → VenueCreated
+                cfg.ReceiveEndpoint("recommendation.adapter.venue-created", e =>
                 {
-                    ConfigureEndpoint<VenueCreatedConsumer, VenueCreatedEvent>(ctx, e);
+                    e.Bind(VenueService_VenueCreated);
+                    ConfigureEndpoint<VenueCreatedAdapterConsumer, VenueServiceVenueCreatedDto>(ctx, e);
                 });
 
-                // --- VenueUpdated ---
-                cfg.ReceiveEndpoint("recommendation.venue-updated", e =>
+                // VenueService → VenueUpdated (different namespace than VenueCreated!)
+                cfg.ReceiveEndpoint("recommendation.adapter.venue-updated", e =>
                 {
-                    ConfigureEndpoint<VenueUpdatedConsumer, VenueUpdatedEvent>(ctx, e);
+                    e.Bind(VenueService_VenueUpdated);
+                    ConfigureEndpoint<VenueUpdatedAdapterConsumer, VenueServiceVenueUpdatedDto>(ctx, e);
                 });
 
-                // --- PostLiked ---
-                cfg.ReceiveEndpoint("recommendation.post-liked", e =>
+                // SocialService → PostLiked (VenueId missing — logs warning)
+                cfg.ReceiveEndpoint("recommendation.adapter.post-liked", e =>
                 {
-                    ConfigureEndpoint<PostLikedConsumer, PostLikedEvent>(ctx, e);
+                    e.Bind(SocialService_PostLiked);
+                    ConfigureEndpoint<PostLikedAdapterConsumer, SocialServicePostLikedDto>(ctx, e);
                 });
 
-                // --- PostSaved ---
-                cfg.ReceiveEndpoint("recommendation.post-saved", e =>
+                // ReviewService → ReviewCreated (maps to ReviewSubmitted logic)
+                cfg.ReceiveEndpoint("recommendation.adapter.review-created", e =>
                 {
-                    ConfigureEndpoint<PostSavedConsumer, PostSavedEvent>(ctx, e);
+                    e.Bind(ReviewService_ReviewCreated);
+                    ConfigureEndpoint<ReviewCreatedAdapterConsumer, ReviewServiceReviewCreatedDto>(ctx, e);
                 });
 
-                // --- VenueFavorited ---
-                cfg.ReceiveEndpoint("recommendation.venue-favorited", e =>
+                // ReviewService → VenueFavorited
+                cfg.ReceiveEndpoint("recommendation.adapter.venue-favorited", e =>
                 {
-                    ConfigureEndpoint<VenueFavoritedConsumer, VenueFavoritedEvent>(ctx, e);
+                    e.Bind(ReviewService_VenueFavorited);
+                    ConfigureEndpoint<VenueFavoritedAdapterConsumer, ReviewServiceVenueFavoritedDto>(ctx, e);
                 });
 
-                // --- ReviewSubmitted ---
-                cfg.ReceiveEndpoint("recommendation.review-submitted", e =>
+                // VenueService → VenueDeleted
+                cfg.ReceiveEndpoint("recommendation.adapter.venue-deleted", e =>
                 {
-                    ConfigureEndpoint<ReviewSubmittedConsumer, ReviewSubmitted>(ctx, e);
+                    e.Bind(VenueService_VenueDeleted);
+                    ConfigureEndpoint<VenueDeletedAdapterConsumer, VenueServiceVenueDeletedDto>(ctx, e);
                 });
 
-                // --- VenueViewed (user interaction) ---
-                cfg.ReceiveEndpoint("recommendation.venue-viewed", e =>
+                // SocialService → PostCreated (also builds PostId→VenueId mapping)
+                cfg.ReceiveEndpoint("recommendation.adapter.post-created", e =>
                 {
-                    ConfigureEndpoint<VenueViewedConsumer, VenueViewedEvent>(ctx, e);
+                    e.Bind(SocialService_PostCreated);
+                    ConfigureEndpoint<PostCreatedAdapterConsumer, SocialServicePostCreatedDto>(ctx, e);
+                });
+
+                // IdentityService → UserDeleted (GDPR cleanup)
+                cfg.ReceiveEndpoint("recommendation.adapter.user-deleted", e =>
+                {
+                    e.Bind(IdentityService_UserDeleted);
+                    ConfigureEndpoint<UserDeletedAdapterConsumer, IdentityServiceUserDeletedDto>(ctx, e);
+                });
+
+                // IdentityService → UserLoggedIn (session start)
+                cfg.ReceiveEndpoint("recommendation.adapter.user-logged-in", e =>
+                {
+                    e.Bind(IdentityService_UserLoggedIn);
+                    ConfigureEndpoint<UserLoggedInAdapterConsumer, IdentityServiceUserLoggedInDto>(ctx, e);
+                });
+
+                // SocialService → PostSaved (save interaction, VenueId lookup via PostVenueMapping)
+                cfg.ReceiveEndpoint("recommendation.adapter.post-saved", e =>
+                {
+                    e.Bind(SocialService_PostSaved);
+                    ConfigureEndpoint<PostSavedAdapterConsumer, SocialServicePostSavedDto>(ctx, e);
                 });
             });
         });
@@ -95,8 +161,21 @@ public static class MassTransitConfiguration
     }
 
     /// <summary>
-    /// Shared endpoint configuration: retry policy and consumer wiring.
-    /// MassTransit by default moves failed messages to {queue_name}_error after retries.
+    /// Shared endpoint configuration: serialization, retry policy, and consumer wiring.
+    ///
+    /// Key settings:
+    /// - ConfigureConsumeTopology = false: prevents MassTransit from auto-creating exchanges
+    ///   based on the DTO CLR type name. We bind manually via Bind() instead.
+    /// - ClearSerialization(): removes default deserializer that enforces messageType URN
+    ///   matching. Without this, producer's URN (VenueCreatedEvent) never matches our DTO
+    ///   type name (VenueServiceVenueCreatedDto) → message goes to _skipped queue.
+    /// - UseRawJsonSerializer(AnyMessageType, isDefault: true): registers as default serializer
+    ///   AND correctly unwraps application/vnd.masstransit+json envelopes, extracting the
+    ///   inner "message" field into the DTO. The isDefault:true is critical — without it the
+    ///   envelope is not unwrapped and all Guid fields become Guid.Empty.
+    /// - UseRawJsonDeserializer(AnyMessageType): additional handler for plain application/json.
+    /// - All DTO properties carry [JsonPropertyName] attributes to map camelCase JSON
+    ///   keys (from producer) to PascalCase C# properties (prevents Guid.Empty / null).
     /// </summary>
     private static void ConfigureEndpoint<TConsumer, TMessage>(
         IBusRegistrationContext ctx,
@@ -104,6 +183,20 @@ public static class MassTransitConfiguration
         where TConsumer : class, IConsumer<TMessage>
         where TMessage : class
     {
+        // Don't auto-create exchanges based on DTO type names — we use Bind() explicitly
+        e.ConfigureConsumeTopology = false;
+
+        // Cross-service message consumption: producer's messageType URN (e.g. VenueCreatedEvent)
+        // never matches our local DTO name → messages go to _skipped without ClearSerialization().
+        // ClearSerialization() + UseRawJsonSerializer bypasses URN matching so the consumer fires.
+        //
+        // NOTE: The raw deserializer does NOT unwrap the MassTransit envelope "message" field —
+        // it maps the outer envelope to the DTO, resulting in Guid.Empty for all Guid fields.
+        // Each consumer handles this via MassTransitEnvelopeHelper.Deserialize<T>() which reads
+        // the raw body and extracts the inner "message" object manually.
+        e.ClearSerialization();
+        e.UseRawJsonSerializer(RawSerializerOptions.AnyMessageType);
+
         // Retry: 3 attempts with increasing intervals (1s, 5s, 30s)
         e.UseMessageRetry(r => r.Intervals(
             TimeSpan.FromSeconds(1),
@@ -114,4 +207,3 @@ public static class MassTransitConfiguration
         e.ConfigureConsumer<TConsumer>(ctx);
     }
 }
-

@@ -1,7 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# RecommendationService Workers projesi icin restore
+
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Domain/CityDiscovery.RecommendationService.Domain.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Domain/"]
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Application/CityDiscovery.RecommendationService.Application.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Application/"]
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Infrastructure/CityDiscovery.RecommendationService.Infrastructure.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Infrastructure/"]
 COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Workers/CityDiscovery.RecommendationService.Workers.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Workers/"]
 RUN dotnet restore "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Workers/CityDiscovery.RecommendationService.Workers.csproj"
 

@@ -2,6 +2,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
+
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Domain/CityDiscovery.RecommendationService.Domain.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Domain/"]
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Application/CityDiscovery.RecommendationService.Application.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Application/"]
+COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Infrastructure/CityDiscovery.RecommendationService.Infrastructure.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Infrastructure/"]
 COPY ["CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/CityDiscovery.RecommendationService.Api.csproj", "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/"]
 RUN dotnet restore "CityDiscovery.RecommendationService/CityDiscovery.RecommendationService/src/CityDiscovery.RecommendationService.Api/CityDiscovery.RecommendationService.Api.csproj"
 
